@@ -1,0 +1,7 @@
+conf/cred.env
+conf/host.env
+
+Gemfile.lock
+.byebug_history
+
+!.gitkeep

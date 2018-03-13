@@ -1,0 +1,35 @@
+version: '2'
+
+services: 
+  line:
+    container_name: line
+    image: ruby
+    expose:
+      - 8080
+    env_file:
+      - conf/cred.env
+      - conf/host.env
+    volumes:
+      - .:/line
+    networks:
+      - nginxproxy_default
+      - line_inner
+    restart: always
+    working_dir: /line
+    entrypoint: /bin/bash
+    stdin_open: true
+    tty: true
+  
+  redis:
+    container_name: line_redis
+    image: redis
+    expose:
+     - 6379
+    networks:
+     - line_inner
+
+networks:
+  line_inner:
+  nginxproxy_default:
+    external: true
+
