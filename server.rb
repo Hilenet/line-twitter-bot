@@ -6,8 +6,9 @@ require 'sinatra/reloader'
 
 require 'line/bot'
 
-require_relative 'src/template'
 require_relative 'src/authenticator'
+require_relative 'src/redis_util'
+require_relative 'src/template'
 
 
 class Server < Sinatra::Base
@@ -21,8 +22,6 @@ class Server < Sinatra::Base
   }
 
 
-  helpers Sinatra::Cookies
-
   get '/' do
     "hoge"
   end
@@ -30,38 +29,46 @@ class Server < Sinatra::Base
   # lineからuserが最初にアクセス
   # userが存在したら不要
   get '/register' do
-    # validate is really from line
+
     # redisで存在確認
     session[:line_id] ||= params['line_id']
-    request_token = $authenticator.get_request_token
+    redirect "line://oaMessage/@eaq0347r", 307 if $redis.get_user params[:line_id]
 
+    # request_token取ってきて，twitterにリダイレクト
+    request_token = $authenticator.get_request_token
     session[:twitter_request_token] = request_token
 
-    redirect $authenticator.get_request_token.authorize_url
+    redirect request_token.authorize_url
   end
 
   # twitterからリダイレクト
   # user作成，保存完了
   get '/auth' do
+    error 400 do 'no line id' end unless session[:line_id]
     error 400 do 'no request token' end unless session[:twitter_request_token]
     error 400 do 'no varifier' end unless params['oauth_verifier']
     
     request_token = session[:twitter_request_token]
     oauth_verifier = params['oauth_verifier']
 
-    access_token = request_token.get_access_token(oauth_verifier: params['oauth_verifier'])
-
+    access_token = request_token.get_access_token(oauth_verifier: oauth_verifier)
+    $redis.set_hash({
+      line_id: session[:line_id],
+      access_token: access_token.token,
+      access_secret: access_token.secret
+    })
+    byebug
 
     redirect "line://oaMessage/@eaq0347r", 307
   end
 
 
+  # webhook
   post '/line' do
     body = request.body.read
 
     signature = request.env['HTTP_X_LINE_SIGNATURE']
     unless $client.validate_signature(body, signature)
-      puts "signature err"
       error 400 do 'Bad Request' end
     end
 
@@ -69,27 +76,67 @@ class Server < Sinatra::Base
     events.each do |event|
       case event
       when Line::Bot::Event::Message
+        # 未連携ユーザなら勧告
+        line_id = event['source']['userId']
+        user = $redis.get_user line_id
+        unless user
+          msg = $template.text_message
+          msg['text'] = "Twitter連携が行われていません．"
+
+          $client.push_message line_id, msg
+          
+          error 400 do 'yet authenticated twitter' end
+        end
+
+        text = event['message']['text']
+        case text
+        when "start"
+          connected_user = User.find_connected line_id
+          if connected_user
+            puts "already connected"
+          else
+            user.start_thread
+            User.connected_users << user
+            
+            msg = $template.text_message
+            msg['text'] = "<system> stream配信を開始"
+            $client.push_message line_id, msg
+          end
+        when "stop"
+          connected_user = User.find_connected line_id
+          unless connected_user
+            puts "yet connected"
+          else
+            connected_user.stop_thread
+            User.connected_users.delete connected_user
+
+            msg = $template.text_message
+            msg['text'] = '<system> stream配信を終了'
+            $client.push_message line_id, msg
+          end
+        end
 
       when Line::Bot::Event::Follow
-        # Redisの該当keyを確認        
-        # 連携確認
-        line_id = event['source']['userId']
+        res = get_follow(event)
 
-        url = "https://line.hile.work/register?line_id=#{line_id}"
-        msg = $template.text_message
-        msg['text'] = "登録して，どうぞ\n#{url}"
-
-        $client.push_message line_id, msg
-        
-      else
-        error 400 do 'Bad Req Type' end
+        error 400 do 'Bad Req Type' end unless res
       end
     end
   end
 
   def get_follow(event)
-    
+    line_id = event['source']['userId']
 
+    # 登録済なら弾く
+    user = $redis.get_user(line_id)
+    return false unless user
+
+    url = "https://line.hile.work/register?line_id=#{line_id}"
+    msg = $template.text_message
+    msg['text'] = "登録して，どうぞ\n#{url}"
+
+    $client.push_message line_id, msg
+    return true
   end
 end
 
@@ -101,6 +148,7 @@ def setup()
   end
   $template = Template.instance
   $authenticator = Authenticator.instance
+  $redis = RedisUtil.instance
 end
 
 setup()
