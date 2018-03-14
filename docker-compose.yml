@@ -16,7 +16,7 @@ services:
       - line_inner
     restart: always
     working_dir: /line
-    entrypoint: /bin/bash
+    entrypoint: ./start
     stdin_open: true
     tty: true
   
