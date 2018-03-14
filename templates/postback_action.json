@@ -1,0 +1,5 @@
+{
+  "type": "postback",
+  "label": "Buy",
+  "data": "action=buy&itemid=123"
+}

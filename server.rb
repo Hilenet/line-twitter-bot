@@ -57,7 +57,6 @@ class Server < Sinatra::Base
       access_token: access_token.token,
       access_secret: access_token.secret
     })
-    byebug
 
     redirect "line://oaMessage/@eaq0347r", 307
   end
@@ -76,50 +75,15 @@ class Server < Sinatra::Base
     events.each do |event|
       case event
       when Line::Bot::Event::Message
-        # 未連携ユーザなら勧告
-        line_id = event['source']['userId']
-        user = $redis.get_user line_id
-        unless user
-          msg = $template.text_message
-          msg['text'] = "Twitter連携が行われていません．"
-
-          $client.push_message line_id, msg
-          
-          error 400 do 'yet authenticated twitter' end
-        end
-
-        text = event['message']['text']
-        case text
-        when "start"
-          connected_user = User.find_connected line_id
-          if connected_user
-            puts "already connected"
-          else
-            user.start_thread
-            User.connected_users << user
-            
-            msg = $template.text_message
-            msg['text'] = "<system> stream配信を開始"
-            $client.push_message line_id, msg
-          end
-        when "stop"
-          connected_user = User.find_connected line_id
-          unless connected_user
-            puts "yet connected"
-          else
-            connected_user.stop_thread
-            User.connected_users.delete connected_user
-
-            msg = $template.text_message
-            msg['text'] = '<system> stream配信を終了'
-            $client.push_message line_id, msg
-          end
-        end
-
+        get_message(event)
+        
       when Line::Bot::Event::Follow
         res = get_follow(event)
 
         error 400 do 'Bad Req Type' end unless res
+      when Line::Bot::Event::Postback
+        # favtとかrtとか
+        get_postback(event)
       end
     end
   end
@@ -138,6 +102,90 @@ class Server < Sinatra::Base
     $client.push_message line_id, msg
     return true
   end
+
+  def get_message(event)
+    # 未連携ユーザなら勧告
+    line_id = event['source']['userId']
+    user = $redis.get_user line_id
+    unless user
+      msg = $template.text_message
+      msg['text'] = "Twitter連携が行われていません．"
+      $client.push_message line_id, msg
+
+      url = "https://line.hile.work/register?line_id=#{line_id}"
+      msg = $template.text_message
+      msg['text'] = "登録して，どうぞ\n#{url}"
+      $client.push_message line_id, msg
+      
+      error 400 do 'yet authenticated twitter' end
+    end
+
+    text = event['message']['text']
+    case text
+    when "start"
+      connected_user = User.find_connected line_id
+      if connected_user
+        puts "already connected"
+      else
+        user.start_thread
+        User.connected_users << user
+        
+        msg = $template.text_message
+        msg['text'] = "<system> stream配信を開始"
+        $client.push_message line_id, msg
+      end
+    when "stop"
+      connected_user = User.find_connected line_id
+      unless connected_user
+        puts "yet connected"
+      else
+        connected_user.stop_thread
+        User.connected_users.delete connected_user
+
+        msg = $template.text_message
+        msg['text'] = '<system> stream配信を終了'
+        $client.push_message line_id, msg
+      end
+    else
+      # tweet実装
+      connected_user = User.find_connected line_id
+      unless connected_user
+        puts "yet connected"
+      else
+        connected_user.tweet text
+      end
+    end
+  end
+
+  # fav, rt
+  def get_postback(event)
+    return unless event['postback']['data']
+    json = JSON.parse event['postback']['data']
+    return unless json
+
+    case json['type']
+    when 'favorite'
+      user = User.find_connected event['source']['userId']
+      user.favorite json['tweet_id']
+
+    when 'retweet'
+      user = User.find_connected event['source']['userId']
+      user.retweet json['tweet_id']
+
+    end
+  end
+
+  def parse_json(text)
+    params = nil
+    begin
+      params = JSON.parse text
+    rescue JSON::ParserError
+      return nil
+    end
+
+    params
+  end
+
 end
 
 

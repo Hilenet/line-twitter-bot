@@ -19,7 +19,10 @@ class Template
       instance_variable_set("@#{val}", hash)
 
       # 同名の関数でcloneを返すように
-      self.class.send(:define_method,val) {eval("@#{val}").clone}
+      self.class.send(:define_method, val) do
+        # 深いコピーの為に文字列にバラす(FileIOよりまし・・・)
+        eval("Marshal.load(Marshal.dump(@#{val}))")
+      end
     end
   end
 

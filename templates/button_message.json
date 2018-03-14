@@ -1,0 +1,14 @@
+{
+  "type": "template",
+  "altText": "This is a buttons template",
+  "template": {
+      "type": "buttons",
+      "text": "Please select",
+      "defaultAction": {
+          "type": "uri",
+          "label": "View detail",
+          "uri": "http://example.com/page/123"
+      },
+      "actions": []
+  }
+}

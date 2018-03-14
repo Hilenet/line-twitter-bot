@@ -1,3 +1,4 @@
+require 'json'
 require 'twitter'
 
 class User
@@ -13,7 +14,14 @@ class User
     @access_secret = access_secret
     @thread = nil
 
-    @client = Twitter::Streaming::Client.new do |config|
+    @r_client = Twitter::REST::Client.new do |config|
+      config.consumer_key = ENV['TWITTER_CONSUMER_KEY']
+      config.consumer_secret = ENV['TWITTER_CONSUMER_SECRET']
+      config.access_token = @access_token
+      config.access_token_secret = @access_secret
+    end
+
+    @s_client = Twitter::Streaming::Client.new do |config|
       config.consumer_key = ENV['TWITTER_CONSUMER_KEY']
       config.consumer_secret = ENV['TWITTER_CONSUMER_SECRET']
       config.access_token = @access_token
@@ -33,23 +41,63 @@ class User
     @@connected_users.find {|u| u.line_id == line_id}
   end
 
+  def tweet text
+    @r_client.update text
+  end
 
-  # TODO: threadに入れていい感じに呼ぶべし 
+  def favorite tweet_id
+    @r_client.favorite! tweet_id
+  end
+
+  def retweet tweet_id
+    @r_client.retweet! tweet_id
+
+  end
+
+  def create_tweet_message tweet
+    msg = $template.button_message
+    msg['altText'] = tweet.text
+    msg['template']['text'] = "<#{tweet.user.name}@#{tweet.user.screen_name}>\n #{tweet.text}"
+
+    button_fav = $template.postback_action
+    button_fav['label'] = 'favorite'
+    button_fav['data'] = {
+      type: 'favorite',
+      tweet_id: tweet.id
+    }.to_json
+    msg['template']['actions'] << button_fav
+
+    button_rt = $template.postback_action
+    button_rt['label']= 'retweet'
+    button_rt['data'] = {
+      type: 'retweet',
+      tweet_id: tweet.id
+    }.to_json
+    msg['template']['actions'] << button_rt
+    
+    msg
+  end
+
+  # reaction buttonつけろ
   def start_thread
     return false if @thread
 
+    begin
     @thread = Thread.new do
-      @client.user do |obj|
+      @s_client.user do |obj|
         case obj
         when Twitter::Tweet
-          msg = $template.text_message
-          msg['text'] = obj.text
-          $client.push_message line_id, msg
+          msg = create_tweet_message obj
+          $client.push_message @line_id, msg
         when Twitter::DirectMessage
           # そのうち実装
         end
       end
     end
+    rescue e
+      puts e
+    end
+
     return true
   end
 
